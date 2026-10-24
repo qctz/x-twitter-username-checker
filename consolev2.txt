@@ -1,0 +1,111 @@
+/*
+  X username checker - browser console version (Opera GX / any Chromium browser)
+  Reads what the page itself shows, so it doesn't depend on X's API endpoints.
+
+  1. Log in to X, open:  https://x.com/settings/screen_name   then REFRESH (F5) once.
+  2. F12 -> Console. Put usernames in NAMES below, paste the whole script, press Enter.
+  3. Results print live; available names are copied to your clipboard at the end.
+     Stop early:  window.__stop = true
+
+  How it decides:
+    - "That username has been taken" message shows  -> taken
+    - Save button turns enabled (no taken message)  -> available
+    - anything else                                 -> unknown / not allowed (with the page text)
+  It never clicks Save, so your username is not changed.
+*/
+(async () => {
+  const NAMES = `
+CrimsonCartel
+GhostSyndicate
+SilentMafia
+RavenSyndicate
+VoidCartel
+SteelMafia
+EmberCartel
+FrostMafia
+PhantomClan
+ObsidianCartel
+WraithMafia
+CobraSyndicate
+AshenCartel
+NovaMafia
+GrimCartel
+HollowMafia
+OnyxSyndicate
+ViperSyndicate
+UmbraCartel
+VaultMafia
+`.split("\n").map(s => s.trim().replace(/^@/, "")).filter(Boolean);
+
+  const DELAY_MIN = 2000, DELAY_MAX = 4000; // ms between names
+  const MAX_WAIT = 7000;                    // ms to wait for the page to show a verdict
+
+  const input = document.querySelector('input[name="typedScreenName"]') ||
+                document.querySelector('input[type="text"]');
+  if (!input) { console.error("Username box not found. Open x.com/settings/screen_name first."); return; }
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const setValue = v => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    setter.call(input, v);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const pageLines = () => new Set(document.body.innerText.split("\n").map(t => t.trim()).filter(Boolean));
+  const takenShown = () => /has been taken|already taken|not available/i.test(document.body.innerText);
+  const saveBtn = () => [...document.querySelectorAll('button,[role="button"]')]
+    .find(b => /^save$/i.test((b.innerText || "").trim()));
+  const saveEnabled = () => {
+    const b = saveBtn();
+    return !!b && !b.disabled && b.getAttribute("aria-disabled") !== "true";
+  };
+
+  async function verdict(name) {
+    setValue("");
+    await sleep(600);
+    const before = pageLines();
+    setValue(name);
+    const start = Date.now();
+    await sleep(900); // give the page time to start its own check
+    while (Date.now() - start < MAX_WAIT) {
+      if (takenShown()) return ["taken", ""];
+      if (saveEnabled()) {
+        await sleep(1200);                       // make sure a late "taken" doesn't show up
+        if (takenShown()) return ["taken", ""];
+        if (saveEnabled()) return ["available", ""];
+      }
+      await sleep(250);
+    }
+    const fresh = [...pageLines()].filter(t => !before.has(t)).join(" | ");
+    return [fresh ? "invalid" : "unknown", fresh || "no message and Save stayed disabled"];
+  }
+
+  const available = [], taken = [], invalid = [], unknown = [];
+  window.__stop = false;
+  console.log(`Checking ${NAMES.length} names...`);
+
+  for (let i = 0; i < NAMES.length; i++) {
+    if (window.__stop) { console.log("Stopped."); break; }
+    const name = NAMES[i];
+    const tag = `[${i + 1}/${NAMES.length}] @${name}`;
+
+    if (!/^[A-Za-z0-9_]{1,15}$/.test(name)) {
+      invalid.push(name);
+      console.log(`${tag}: invalid format, skipped`);
+      continue;
+    }
+
+    const [status, detail] = await verdict(name);
+    if (status === "available") { available.push(name); console.log(`%c${tag}: AVAILABLE`, "color:#0a0;font-weight:bold"); }
+    else if (status === "taken") { taken.push(name); console.log(`${tag}: taken`); }
+    else if (status === "invalid") { invalid.push(name); console.log(`${tag}: not allowed (${detail})`); }
+    else { unknown.push(name); console.warn(`${tag}: unknown (${detail})`); }
+
+    await sleep(DELAY_MIN + Math.random() * (DELAY_MAX - DELAY_MIN));
+  }
+
+  setValue("");
+  console.log(`Done. Available: ${available.length} | Taken: ${taken.length} | Invalid: ${invalid.length} | Unknown: ${unknown.length}`);
+  console.log("AVAILABLE:\n" + available.join("\n"));
+  window.__results = { available, taken, invalid, unknown };
+  try { copy(available.join("\n")); console.log("Available names copied to clipboard."); } catch (e) {}
+})();
